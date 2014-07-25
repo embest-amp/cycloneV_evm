@@ -1,0 +1,270 @@
+/*
+***************************************************************************
+*			Embest Tech co., ltd 
+*			 www.embest-tech.com 
+***************************************************************************
+*
+*ipi_demo
+*/
+
+#include <linux/completion.h>
+#include <linux/dcache.h>
+#include <linux/delay.h>
+#include <linux/device.h>
+#include <linux/fcntl.h>
+#include <linux/kref.h>
+#include <linux/kthread.h>
+#include <linux/limits.h>
+#include <linux/module.h>
+#include <linux/rwsem.h>
+#include <linux/slab.h>
+#include <linux/spinlock.h>
+#include <linux/interrupt.h>
+#include <linux/string.h>
+#include <linux/freezer.h>
+#include <linux/utsname.h>
+#include <linux/delay.h>
+#include <linux/smp.h>
+#include <linux/vmalloc.h>
+#include <linux/mm.h>
+#include <linux/mmzone.h>
+#include <linux/sched.h>
+#include <asm/mach/map.h>
+
+#define DRIVER_NAME		"ipi_demo"
+#define DRIVER_VERSION		"1 August 2013"
+
+
+MODULE_DESCRIPTION("ipi_demo");
+MODULE_AUTHOR("embest co.,ltd");
+MODULE_LICENSE("Dual BSD/GPL");
+
+static struct map_desc amp_share_desc_so = {
+        .virtual        = 0,
+        .pfn            = 0, /* run-time */
+        .length         = SZ_1M,
+        .type           = MT_MEMORY_SO,
+};
+
+static struct map_desc amp_share_desc_cache = {
+        .virtual        = 0,
+        .pfn            = 0, /* run-time */
+        .length         = SZ_1M,
+        .type           = MT_MEMORY,
+};
+
+static struct task_struct	*thread_task;
+static int gIpiCnt=0;
+static int gCpu1Done = 0;
+static int terimate=0;
+
+static volatile unsigned int ipcFlag=0;
+static  unsigned int *p_so, *p_cache;
+
+static u32 walk_virt_to_phys(u32 addr)
+{
+        pmd_t *pmd;
+        pte_t *ptep;
+
+        pgd_t *pgd = pgd_offset(current->active_mm, addr);
+        if (pgd_none(*pgd) || pgd_bad(*pgd))
+                return 0;
+
+	printk("pgd=0x%08x pgd_val=0x%08x\n", pgd, pgd_val(*pgd));
+
+        pmd = pmd_offset(pgd, addr);
+        if (pmd_none(*pmd) /*|| pmd_bad(*pmd)*/) //allow section map pass
+                return 0;
+
+	printk("pmd=0x%08x *pmd=0x%08x\n", pmd, *pmd);
+	if(!pmd_bad(*pmd)) //page map
+	{
+        	ptep = pte_offset_map(pmd, addr);
+        	if (ptep && pte_present(*ptep))
+		{
+			printk("L_pte=0x%08x *L_pte=0x%08x\n", ptep, *ptep);//linux version
+			ptep += 512;
+			printk("H_pte=0x%08x *H_pte=0x%08x\n", ptep, *ptep);
+                	return (PAGE_MASK & *ptep) | (~PAGE_MASK & addr);//hw version
+		}
+	}
+        return (pgd_val(*pgd)&SECTION_MASK) | (~SECTION_MASK & addr); //is section map
+}
+
+/*
+***************************************************************************
+*                       Embest Tech co., ltd
+*                        www.embest-tech.com
+***************************************************************************
+*
+*ipi interrupt handler
+*/
+static irqreturn_t sgi9handler(int irq, void *dev_id)
+{
+        //printk(KERN_INFO "CPU#0:%s:got IPI SGI%d from CPU#1\n", __FUNCTION__, irq-512);
+        //ipcFlag++;
+        //printk("value @ pysical addr 0x1F000000=0x%08x\n", *p);
+	gCpu1Done = 1;
+        return IRQ_HANDLED;
+}
+
+extern void gic_raise_softirq(const struct cpumask *mask, unsigned int irq);
+//extern void dump_gic_reg(void);
+extern void create_mapping(struct map_desc *md);
+
+/*
+***************************************************************************
+*                       Embest Tech co., ltd
+*                        www.embest-tech.com
+***************************************************************************
+*
+*two CPUs concurrenctly access the same memory adrress
+*/
+static int ipi_demo_thread(void *arg)
+{
+	int cpu;
+	int i;
+	struct mm_struct *initmm = &init_mm;
+
+	int     rc=0;
+        struct vm_struct * area_so, *area_cache;
+        unsigned long virtual_so, virtual_cache;
+
+        area_so = alloc_vm_area(0x100000, NULL);
+        if(area_so)
+        {
+                virtual_so  = (unsigned long)area_so->addr;
+                //printk("alloced vmalloc virtual addr:0x%08x\n", virtual_so);
+                amp_share_desc_so.virtual = virtual_so;
+                amp_share_desc_so.pfn = __phys_to_pfn(0x1F000000);
+                create_mapping(&amp_share_desc_so);
+        }
+        else
+                return -1;
+
+        p_so = virtual_so;
+        printk("physical memory 0x1F000000 map to virtual:0x%08x so\n", p_so);
+        printk("phy=0x%08x\n", walk_virt_to_phys(virtual_so));
+
+        area_cache = alloc_vm_area(0x100000, NULL);
+        if(area_cache)
+        {
+                virtual_cache  = (unsigned long)area_cache->addr;
+                //printk("alloced vmalloc virtual addr:0x%08x\n", virtual_cache);
+                amp_share_desc_cache.virtual = virtual_cache;
+                amp_share_desc_cache.pfn = __phys_to_pfn(0x1F800000);
+                create_mapping(&amp_share_desc_cache);
+        }
+        else
+                return -1;
+
+        p_cache = virtual_cache;
+        printk("physical memory 0x1F800000 map to virtual:0x%08x cache\n", p_cache);
+        printk("phy=0x%08x\n", walk_virt_to_phys(virtual_cache));
+
+        printk("page table phy=0x%08x\n", walk_virt_to_phys(0x80004000));
+
+	printk(KERN_INFO "++ipi_demo_thread &init_mm=0x%08x\n", (u32)initmm);
+	//printk(KERN_INFO "++ipi_demo_thread\n");
+
+        /* The main loop */
+	/*
+        while (!terimate)
+	{
+		cpu=1;
+                //printk(KERN_INFO"send IPI SGI0 to cpu#1\n");
+		gic_raise_softirq(cpumask_of(cpu), 8);
+                for(i = 0; i<0x10000; i++)
+                        atomic_add(2, (atomic_t *)p_cache);
+		//while(!gCpu1Done)
+			msleep(1000);
+        	printk("value @ pysical addr 0x1F000000=0x%08x\n", *p_so);
+		gCpu1Done = 0;
+		terimate = 1;
+	}*/
+	cpu = 1;
+	//gic_raise_softirq(cpumask_of(cpu), 8);
+	terimate = 0;
+	while(!terimate)
+	{
+		i = smp_processor_id();
+		printk("value @ pysical addr 0x1F800000=0x%08x\n", *p_cache);
+		printk("ipi thread on cpu%x\n", i);
+                atomic_add(2, (atomic_t *)p_cache);
+		msleep(1000);
+	}
+	printk(KERN_INFO "--ipi_demo_thread\n");
+	return 0;
+}
+
+/*
+***************************************************************************
+*                       Embest Tech co., ltd
+*                        www.embest-tech.com
+***************************************************************************
+*
+*map physical memory adrress to virtual memory address, request ipi irq, launch thread
+*/
+static int __init ipi_demo_init(void)
+{
+	int	rc=0;
+/*
+        struct vm_struct * area_so, *area_cache;
+        unsigned long virtual_so, virtual_cache;
+	printk(KERN_INFO "++ipi_demo_init\n");
+       	//rc = request_irq(512+9, sgi9handler, IRQF_SHARED, "SGI", &ipcFlag);
+        //printk(KERN_INFO "request_irq:result=0x%08x\n", rc);
+
+        area_so = alloc_vm_area(0x100000, NULL);
+        if(area_so)
+        {
+                virtual_so  = (unsigned long)area_so->addr;
+                //printk("alloced vmalloc virtual addr:0x%08x\n", virtual_so);
+                amp_share_desc_so.virtual = virtual_so;
+                amp_share_desc_so.pfn = __phys_to_pfn(0x1F000000);
+                create_mapping(&amp_share_desc_so);
+        }
+	else
+		return -1;
+
+        p_so = virtual_so;
+        printk("physical memory 0x1F000000 map to virtual:0x%08x so\n", p_so);
+	printk("phy=0x%08x\n", walk_virt_to_phys(virtual_so));
+
+	area_cache = alloc_vm_area(0x100000, NULL);
+        if(area_cache)
+        {
+                virtual_cache  = (unsigned long)area_cache->addr;
+                //printk("alloced vmalloc virtual addr:0x%08x\n", virtual_cache);
+                amp_share_desc_cache.virtual = virtual_cache;
+                amp_share_desc_cache.pfn = __phys_to_pfn(0x1F800000);
+                create_mapping(&amp_share_desc_cache);
+        }
+        else
+                return -1;
+
+        p_cache = virtual_cache;
+        printk("physical memory 0x1F800000 map to virtual:0x%08x cache\n", p_cache);
+	printk("phy=0x%08x\n", walk_virt_to_phys(virtual_cache));
+*/
+	thread_task = kthread_create(ipi_demo_thread, &gIpiCnt, "ipi_demo:1:0");
+	//thread_task = kthread_create_on_cpu(ipi_demo_thread, &gIpiCnt, 1 , "ipi_demo:1:0");
+        if (IS_ERR(thread_task)) {
+                rc = PTR_ERR(thread_task);
+		return rc;
+        }
+
+	wake_up_process(thread_task);
+	//kthread_unpark(thread_task);
+
+	printk(KERN_INFO "--ipi_demo_init\n");
+	return rc;
+}
+module_init(ipi_demo_init);
+
+
+static void __exit ipi_demo_cleanup(void)
+{
+	terimate = 1;
+}
+module_exit(ipi_demo_cleanup);

@@ -1,0 +1,368 @@
+/*
+***************************************************************************
+*			Embest Tech co., ltd 
+*			 www.embest-tech.com 
+***************************************************************************
+*
+*ipi_demo
+*/
+
+#include <linux/completion.h>
+#include <linux/dcache.h>
+#include <linux/delay.h>
+#include <linux/device.h>
+#include <linux/fcntl.h>
+#include <linux/kref.h>
+#include <linux/kthread.h>
+#include <linux/limits.h>
+#include <linux/module.h>
+#include <linux/rwsem.h>
+#include <linux/slab.h>
+#include <linux/spinlock.h>
+#include <linux/interrupt.h>
+#include <linux/string.h>
+#include <linux/freezer.h>
+#include <linux/utsname.h>
+#include <linux/delay.h>
+#include <linux/smp.h>
+#include <linux/vmalloc.h>
+#include <linux/mm.h>
+#include <linux/mmzone.h>
+#include <linux/sched.h>
+#include <linux/fs.h>
+#include <asm/mach/map.h>
+#include <asm/amp_config.h>
+
+#define DRIVER_NAME		"ipi_demo"
+#define DRIVER_VERSION		"1 August 2013"
+
+
+MODULE_DESCRIPTION("poll_demo");
+MODULE_AUTHOR("embest co.,ltd");
+MODULE_LICENSE("Dual BSD/GPL");
+static u32 terimate=0;
+static u32 ipcflag;
+static struct task_struct       *thread_handle[2];
+static u32 *pbuf0 = (u32 *)AMP_SHARE_BUFFER_START;
+static u32 *pbuf1 = (u32 *)(AMP_SHARE_BUFFER_START + DRAM_BUF_SIZE);
+static u32 *psram = (u32 *)AMP_SHARE_SRAM_STRART;
+
+static u32 walk_virt_to_phys(u32 addr)
+{
+        pmd_t *pmd;
+        pte_t *ptep;
+
+        pgd_t *pgd = pgd_offset(current->active_mm, addr);
+        if (pgd_none(*pgd) || pgd_bad(*pgd))
+                return 0;
+
+        pmd = pmd_offset(pgd, addr);
+        if (pmd_none(*pmd) /*|| pmd_bad(*pmd)*/) //allow section map pass yejc
+                return 0;
+
+	if(!pmd_bad(*pmd)) //page map
+	{
+        	ptep = pte_offset_map(pmd, addr);
+        	if (ptep && pte_present(*ptep))
+		{
+			ptep += 512;
+                	return (PAGE_MASK & *ptep) | (~PAGE_MASK & addr);//hw version yejc
+		}
+	}
+        return (pgd_val(*pgd)&SECTION_MASK) | (~SECTION_MASK & addr); //is section map yejc
+}
+
+
+/*
+***************************************************************************
+*                       Embest Tech co., ltd
+*                        www.embest-tech.com
+***************************************************************************
+*
+*two CPUs concurrenctly access the same memory adrress
+*/
+static int poll_demo_thread(void *arg)
+{
+	int cpu;
+	int i, tmp;
+	int sh_buf_test_cnt = 0;
+	enum test_sequence ts = eSH_DRAM;
+
+	cpu = 1;
+	//ACCESS_ONCE(asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].linux_cmd_args) = eSH_DRAM;
+	asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].linux_cmd_args = eSH_DRAM;
+	while(ts == eSH_DRAM)
+	{
+		if(ACCESS_ONCE(asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].linux_cmd_status) == COMPLETE)
+		{
+			//for(i = 0; i < (DRAM_BUF_SIZE/4); i++)
+			//	*(pbuf0 + i) = CPU_DATA_PATERN0;
+			memset_int(pbuf0, CPU_DATA_PATERN0, DRAM_BUF_SIZE);
+			ACCESS_ONCE(asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].linux_cmd_status) = PENDING;
+			sh_buf_test_cnt++;
+			//request bm check buf
+			gic_raise_softirq(cpumask_of(cpu), SGI_LINUX_REQ_BM_CONSUME_BUF);
+		}
+		if(sh_buf_test_cnt >=  CORE_SHARE_BUFFER_TEST_COUNT)
+			break;
+	}
+
+	sh_buf_test_cnt = 0;
+	//give some time to last gic issue and process buffer data before move next test case;
+	msleep(10);
+	//ACCESS_ONCE(asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].linux_cmd_args) = eSH_SRAM;
+	asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].linux_cmd_args = eSH_SRAM;
+	ts++;
+	//ACCESS_ONCE(asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].linux_cmd_args) = eSH_SRAM;
+	while(ts == eSH_SRAM)
+        {
+                if(ACCESS_ONCE(asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].linux_cmd_status) == COMPLETE)
+                {
+                        //for(i = 0; i < (DRAM_BUF_SIZE/4); i++)
+                        //      *(pbuf0 + i) = CPU_DATA_PATERN0;
+                        memset_int(psram, CPU_DATA_PATERN0, SRAM_BUF_SIZE);
+                        ACCESS_ONCE(asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].linux_cmd_status) = PENDING;
+                        sh_buf_test_cnt++;
+                        //request bm check buf
+                        gic_raise_softirq(cpumask_of(cpu), SGI_LINUX_REQ_BM_CONSUME_BUF);
+                }
+                if(sh_buf_test_cnt >=  CORE_SHARE_BUFFER_TEST_COUNT)
+                        break;
+        }
+
+	//give some time to last gic issue and process buffer data before move next test case;
+        msleep(10);
+	ts++;
+	asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].linux_cmd_args = eSPINLOCK;
+	asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].bm_cmd_status = 0;
+	//isse gic notify BM do spinlock test
+	for(i = 0; i < SPINLOCK_TEST_COUNT; i++)
+	{
+		raw_spin_lock(&asp->rslocks[0]);
+		tmp = asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].bm_cmd_status;
+		//dummy sh_buf_test_cnt++
+		sh_buf_test_cnt++;
+		asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].bm_cmd_status += 2;
+		if((asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].bm_cmd_status - tmp) != 2)
+			printk("Linux:spinlock test failed!\n");
+		raw_spin_unlock(&asp->rslocks[0]);
+		//dummy operation on sh_buf_test_cnt++ simulate the actual scenario to give another cpu chance
+		//to take lock, reduce starvation situation
+		sh_buf_test_cnt++;
+	}
+	printk("Linux spinlock test:%d\n", asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].bm_cmd_status);
+	//
+
+	printk(KERN_INFO "--poll_demo_thread\n");
+	return 0;
+}
+static int thread_shced_test(void *arg)
+{
+        printk(KERN_INFO "++thread_shced_test\n");
+        while(1)
+        {
+		*(u32 *)SOCFGA_GPIO1_VIRT_BASE ^= 0xc<<12;
+                msleep(1);
+        }
+        printk(KERN_INFO "--thread_shced_test\n");
+        return 0;
+}
+
+static irqreturn_t sgi13handler(int irq, void *dev_id)
+{
+
+        int i;
+	int size;
+	u32 *p;
+
+	//TODO: u should move the check routine to BH in actual project
+	//if(ACCESS_ONCE(asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].linux_cmd_args) == eSH_DRAM)
+	if(asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].linux_cmd_args == eSH_DRAM)
+	{
+		p = pbuf0;
+		size = DRAM_BUF_SIZE>>2;
+	}
+	else  if(asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].linux_cmd_args == eSH_SRAM)
+	//else  if(ACCESS_ONCE(asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].linux_cmd_args) == eSH_SRAM)
+	{
+		p = psram;
+		size = SRAM_BUF_SIZE>>2;
+	}
+	for(i = 0; i < size; i++)
+		if(*(p + i) != CPU_DATA_PATERN3)
+			printk("check buf from bm failed! p=%d, *p=%x~~~~\n", p, *(p + i));
+	
+	//printk("check buf from bm finish!~~~~~\n");
+	ACCESS_ONCE(asp->sra[SGI_LINUX_REQ_BM_CONSUME_BUF].linux_cmd_status) = COMPLETE;
+        return IRQ_HANDLED;
+}
+
+static unsigned long useflags;
+static DEFINE_MUTEX(amp_mutex);
+
+static int amp_open(struct inode *inode, struct file *filp)
+{
+        int result = 0;
+
+        mutex_lock(&amp_mutex);
+        if (test_and_set_bit(0, &useflags)) {
+                result = -EBUSY;
+                /* this legacy device is always one per system and it doesn't
+                 * know how to handle multiple concurrent clients.
+                 */
+                goto out;
+        }
+	/*
+        result = request_irq(amp_interrupt, &amp_interrupt,
+                             IRQF_DISABLED, "SGI", amp_interrupt);
+        if (result == -EBUSY)
+                printk(KERN_ERR "amp: Interrupt can't be reserved.\n");
+	*/
+out:
+        mutex_unlock(&amp_mutex);
+        return result;
+}
+
+static long amp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	return 0;
+}
+
+static int amp_mmap(struct file *file, struct vm_area_struct *vma)
+{
+	size_t size = vma->vm_end - vma->vm_start;
+
+	/*
+	if (!valid_mmap_phys_addr_range(vma->vm_pgoff, size))
+		return -EINVAL;
+
+	if (!private_mapping_ok(vma))
+		return -ENOSYS;
+
+	if (!range_is_allowed(vma->vm_pgoff, size))
+		return -EPERM;
+
+	if (!phys_mem_access_prot_allowed(file, vma->vm_pgoff, size,
+						&vma->vm_page_prot))
+		return -EINVAL;
+	
+	vma->vm_page_prot = phys_mem_access_prot(file, vma->vm_pgoff,
+						 size,
+						 vma->vm_page_prot);
+	
+	vma->vm_ops = &mmap_mem_ops;
+	*/
+	/* Remap-pfn-range will mark the range VM_IO */
+	if (remap_pfn_range(vma,
+			    vma->vm_start,
+			    vma->vm_pgoff,
+			    size,
+			    vma->vm_page_prot)) {
+		return -EAGAIN;
+	}
+	return 0;
+}
+
+static int amp_release(struct inode *inode, struct file *filp)
+{
+        //free_irq(amp_interrupt, amp_interrupt);
+
+        return 0;
+}
+
+static const struct file_operations amp_fops = {
+        .mmap = amp_mmap,
+	.open = amp_open,
+	.unlocked_ioctl = amp_ioctl,
+        .release = amp_release,
+};
+
+static struct class *amp_class;
+int amp_major = 0;
+
+static ssize_t amp_test_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t size)
+{
+        int r, enabled;
+
+	if(strncmp(buf, "test", 4) == 0)
+		printk(KERN_INFO"amp test begin\n");
+
+        return size;
+}
+
+static ssize_t
+bm_log_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	//return sprintf(buf, "%s\n", 4096);
+	return sprintf(buf, "hello world! %d\n", 4096);
+}
+
+static struct device_attribute amp_dev_attrs[] = {
+	__ATTR(amp_test, 0666, NULL, amp_test_store),
+	__ATTR(bm_log, 0666, bm_log_show, NULL),
+	__ATTR_NULL
+};
+/*
+***************************************************************************
+*                       Embest Tech co., ltd
+*                        www.embest-tech.com
+***************************************************************************
+*
+*request ipi irq, launch thread
+*/
+static int __init poll_demo_init(void)
+{
+	int rc=0;
+	
+	rc = register_chrdev(amp_major, "amp", &amp_fops);
+	if(rc < 0)
+	{
+        	printk(KERN_INFO"failed to register amp dev\n");
+		return rc;
+	}
+	amp_major = rc;
+
+        amp_class = class_create(THIS_MODULE, "amp");
+        if (IS_ERR(amp_class))
+                return PTR_ERR(amp_class);
+
+	amp_class->dev_attrs = amp_dev_attrs;
+
+	if(!device_create(amp_class, NULL, MKDEV(amp_major, 0), NULL, "amp"))
+		printk(KERN_INFO"amp:device_create failed!\n");
+
+
+	rc = request_irq(512 + SGI_BM_REQ_LINUX_CONSUME_BUF, sgi13handler, IRQF_SHARED, "SGI", &ipcflag);
+	if(rc)
+	{
+		printk(KERN_INFO"%s:request irq failed!\r\n", __FUNCTION__);
+		return rc;
+	}
+
+	thread_handle[0] = kthread_create(poll_demo_thread, NULL, "poll_demo:0:0");
+	//thread_task = kthread_create_on_cpu(ipi_demo_thread, &gIpiCnt, 0 , "ipi_demo:1:0");
+        if (IS_ERR(thread_handle[0])) {
+                rc = PTR_ERR(thread_handle[0]);
+		return rc;
+        }
+	thread_handle[1] = kthread_create(thread_shced_test, NULL, "sched_test:0:0");
+        if (IS_ERR(thread_handle[1])) {
+                rc = PTR_ERR(thread_handle[1]);
+                return rc;
+        }
+
+	wake_up_process(thread_handle[0]);
+	wake_up_process(thread_handle[1]);
+	//kthread_unpark(thread_task);
+
+	printk(KERN_INFO "--poll_demo_init\n");
+	return rc;
+}
+module_init(poll_demo_init);
+
+
+static void __exit poll_demo_cleanup(void)
+{
+	terimate = 1;
+}
+module_exit(poll_demo_cleanup);

@@ -1,0 +1,194 @@
+/*
+ *  Copyright (C) 2012 Altera Corporation <www.altera.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+/dts-v1/;
+/include/ "socfpga.dtsi"
+
+/ {
+	model = "Altera SOCFPGA Cyclone V";
+	compatible = "altr,socfpga-cyclone5";
+
+	chosen {
+		bootargs = "console=ttyS0,57600";
+	};
+
+	aliases {
+		/* this allow the ethaddr uboot environmnet variable contents
+		 * to be added to the gmac1 device tree blob.
+		 */
+		ethernet0 = &gmac1;
+	};
+
+	soc {
+		ethernet@ff700000 {
+			status = "disabled";
+		};
+
+		ethernet@ff702000 {
+			phy-mode = "rgmii";
+			phy-addr = <0xffffffff>; /* probe for phy addr */
+		};
+
+		qspi: spi@ff705000 {
+				compatible = "cadence,qspi";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				reg = <0xff705000 0x1000>,
+					<0xffa00000 0x1000>;
+				interrupts = <0 151 4>;
+				master-ref-clk = <400000000>;
+				ext-decoder = <0>;  /* external decoder */
+				num-chipselect = <4>;
+				fifo-depth = <128>;
+				bus-num = <2>;
+
+				flash0: n25q00@0 {
+					#address-cells = <1>;
+					#size-cells = <1>;
+					compatible = "n25q00";
+					reg = <0>;	/* chip select */
+					spi-max-frequency = <100000000>; /* max:25000000,min:12500000 */
+					page-size = <256>;
+					block-size = <16>; /* 2^16, 64KB */
+					quad = <1>;	   /* 1-support quad */
+					tshsl-ns = <200>;
+					tsd2d-ns = <255>;
+					tchsh-ns = <20>;
+					tslch-ns = <20>;
+
+					partition@0 {
+						/* 18MB for raw data. */
+						label = "Flash 0 Raw Data";
+						reg = <0x0 0x1200000>;
+					};
+					partition@1200000 {
+						/* 120MB for jffs2 data. */
+						label = "Flash 0 jffs2 Filesystem";
+						reg = <0x1200000 0x7800000>;
+					};
+				};
+
+				flash1: n25q00@1 {
+					#address-cells = <1>;
+					#size-cells = <1>;
+					compatible = "n25q00";
+					reg = <1>;	/* chip select */
+					spi-max-frequency = <100000000>;
+					page-size = <256>;
+					block-size = <16>; /* 2^16, 64KB */
+					quad = <1>;
+					tshsl-ns = <200>;
+					tsd2d-ns = <255>;
+					tchsh-ns = <20>;
+					tslch-ns = <20>;
+
+					partition@0 {
+						/* 16MB for user data. */
+						label = "Flash 1 User Data";
+						reg = <0x0 0x1000000>;
+					};
+				};
+			};
+
+		timer0@ffc08000 {
+			clock-frequency = <100000000>;
+		};
+
+		timer1@ffc09000 {
+			clock-frequency = <100000000>;
+		};
+
+		timer2@ffd00000 {
+			clock-frequency = <25000000>;
+		};
+
+		timer3@ffd01000 {
+			clock-frequency = <25000000>;
+		};
+
+		serial0@ffc02000 {
+			clock-frequency = <100000000>;
+		};
+
+		serial1@ffc03000 {
+			clock-frequency = <100000000>;
+		};
+
+		i2c0: i2c@ffc04000 {
+			speed-mode = <0>;
+		};
+
+		leds {
+			compatible = "gpio-leds";
+			fpga0 {
+				label = "fpga_led0";
+				gpios = <&agpio0 0 1>;
+			};
+
+			fpga1 {
+				label = "fpga_led1";
+				gpios = <&agpio0 1 1>;
+			};
+
+			fpga2 {
+				label = "fpga_led2";
+				gpios = <&agpio0 2 1>;
+			};
+
+			fpga3 {
+				label = "fpga_led3";
+				gpios = <&agpio0 3 1>;
+			};
+
+			hps0 {
+				label = "hps_led0";
+				gpios = <&gpio1 15 1>;
+			};
+
+			hps1 {
+				label = "hps_led1";
+				gpios = <&gpio1 14 1>;
+			};
+
+			hps2 {
+				label = "hps_led2";
+				gpios = <&gpio1 13 1>;
+			};
+
+			hps3 {
+				label = "hps_led3";
+				gpios = <&gpio1 12 1>;
+			};
+		};
+	};
+};
+
+&i2c0 {
+	lcd: lcd@28 {
+		compatible = "newhaven,nhd-0216k3z-nsw-bbw";
+		reg = <0x28>;
+		height = <2>;
+		width = <16>;
+		brightness = <8>;
+	};
+
+	eeprom@51 {
+		compatible = "atmel,24c32";
+		reg = <0x51>;
+		pagesize = <32>;
+	};
+};

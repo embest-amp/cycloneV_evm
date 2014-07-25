@@ -1,0 +1,335 @@
+/*
+ *  Copyright (C) 2012 Altera <www.altera.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+/include/ "skeleton.dtsi"
+
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	aliases {
+		ethernet0 = &gmac0;
+		ethernet1 = &gmac1;
+		serial0 = &uart0;
+		serial1 = &uart1;
+		timer0 = &timer0;
+		timer1 = &timer1;
+		timer2 = &timer2;
+		timer3 = &timer3;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu@0 {
+			compatible = "arm,cortex-a9";
+			device_type = "cpu";
+			reg = <0>;
+			next-level-cache = <&L2>;
+		};
+		cpu@1 {
+			compatible = "arm,cortex-a9";
+			device_type = "cpu";
+			reg = <1>;
+			next-level-cache = <&L2>;
+		};
+	};
+
+	intc: intc@fffed000 {
+		compatible = "arm,cortex-a9-gic";
+		#interrupt-cells = <3>;
+		interrupt-controller;
+		reg = <0xfffed000 0x1000>,
+		      <0xfffec100 0x100>;
+	};
+
+	soc {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "simple-bus";
+		device_type = "soc";
+		interrupt-parent = <&intc>;
+		ranges;
+
+		agpio0: gpio@0xc0000000 {
+			compatible = "altr,pio-1.0";
+			/* Register base 0xff200000 is for a light-weight bridge */
+			reg = <0xff200000 0x10>;
+			width = <32>;
+			/* There are 64 interrupts from the FPGA start at 72, so 45 has to be wrong */
+			interrupts = <0 45 4>;
+			interrupt-controller;
+			#interrupt-cells = <1>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			level_trigger = <0>;
+		};
+
+
+		amba {
+			compatible = "arm,amba-bus";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges;
+
+			pdma: pdma@ffe01000 {
+				compatible = "arm,pl330", "arm,primecell";
+				reg = <0xffe01000 0x1000>;
+				interrupts = <0 180 4>;
+			};
+		};
+
+		clkmgr@ffd04000 {
+				compatible = "altr,clk-mgr";
+				reg = <0xffd04000 0x1000>;
+			};
+
+
+		gmac0: ethernet@ff700000 {
+			compatible = "altr,socfpga-stmmac", "snps,dwmac-3.70a", "snps,dwmac";
+			reg = <0xff700000 0x2000>;
+			interrupts = <0 115 4>;
+			interrupt-names = "macirq";
+			mac-address = [00 00 00 00 00 00];/* Filled in by U-Boot */
+		};
+
+		gmac1: ethernet@ff702000 {
+			compatible = "altr,socfpga-stmmac", "snps,dwmac-3.70a", "snps,dwmac";
+			reg = <0xff702000 0x2000>;
+			interrupts = <0 120 4>;
+			interrupt-names = "macirq";
+			mac-address = [00 00 00 00 00 00];/* Filled in by U-Boot */
+		};
+
+		gpio0: gpio@ff708000 {
+			compatible = "snps,dw-gpio";
+			reg = <0xff708000 0x1000>;
+			interrupts = <0 164 4>;
+			width = <29>;
+			virtual_irq_start = <257>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+			gpio-controller;
+			#gpio-cells = <2>;
+		};
+
+		gpio1: gpio@ff709000 {
+			compatible = "snps,dw-gpio";
+			reg = <0xff709000 0x1000>;
+			interrupts = <0 165 4>;
+			width = <29>;
+			virtual_irq_start = <286>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+			gpio-controller;
+			#gpio-cells = <2>;
+		};
+
+		gpio2: gpio@ff70a000 {
+			compatible = "snps,dw-gpio";
+			reg = <0xff70a000 0x1000>;
+			interrupts = <0 166 4>;
+			width = <27>;
+			virtual_irq_start = <315>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+			gpio-controller;
+			#gpio-cells = <2>;
+		};
+
+		L2: l2-cache@fffef000 {
+			compatible = "arm,pl310-cache";
+			reg = <0xfffef000 0x1000>;
+			interrupts = <0 38 0x04>;
+			cache-unified;
+			cache-level = <2>;
+			arm,tag-latency = <1 1 1>;
+			arm,data-latency = <2 1 1>;
+		};
+
+		mmc: dwmmc0@ff704000 {
+			compatible = "snps,dw-mshc";
+			reg = <0xff704000 0x1000>;
+			interrupts = <0 139 4>;
+			bus-hz = <12500000>; /*12.5 MHz*/
+			#address-cells = <1>;
+			#size-cells = <0>;
+			num-slots = <1>;
+			supports-highspeed;
+			broken-cd;
+			fifo-depth = <0x400>;
+			slot@0 {
+				reg = <0>;
+				bus-width = <4>;
+			};
+		};
+
+		nand: nand@ff900000 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			compatible = "denali,denali-nand-dt";
+			reg = <0xff900000 0x100000>, <0xffb80000 0x10000>;
+			reg-names = "nand_data", "denali_reg";
+			interrupts = <0 144 4>;
+			dma-mask = <0xffffffff>;
+			};
+
+		rstmgr@ffd05000 {
+			compatible = "altr,rst-mgr";
+			reg = <0xffd05000 0x1000>;
+		};
+
+		spi0: spi@fff00000 {
+			compatible = "snps,dw-spi-mmio";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0xfff00000 0x1000>;
+			interrupts = <0 154 4>;
+			num-chipselect = <4>;
+			bus-num = <0>;
+			tx-dma-channel = <&pdma 16>;
+			rx-dma-channel = <&pdma 17>;
+
+			spidev@0 {
+				compatible = "spidev";
+				reg = <0>;	/* chip select */
+				spi-max-frequency = <100000000>;
+				enable-dma = <1>;
+			};
+		};
+
+		spi1: spi@fff01000 {
+			compatible = "snps,dw-spi-mmio";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0xfff01000 0x1000>;
+			interrupts = <0 156 4>;
+			num-chipselect = <4>;
+			bus-num = <1>;
+			tx-dma-channel = <&pdma 20>;
+			rx-dma-channel = <&pdma 21>;
+
+			spidev@0 {
+				compatible = "spidev";
+				reg = <0>;
+				spi-max-frequency = <100000000>;
+				enable-dma = <1>;
+			};
+		};
+		
+		sysmgr@ffd08000 {
+			compatible = "altr,sys-mgr";
+			reg = <0xffd08000 0x4000>;
+		};
+
+		/* Local timer */
+		timer@fffec600 {
+			compatible = "arm,cortex-a9-twd-timer";
+			reg = <0xfffec600 0x100>;
+			interrupts = <1 13 0xf04>;
+		};
+
+		timer0: timer0@ffc08000 {
+			compatible = "snps,dw-apb-timer-sp";
+			interrupts = <0 167 4>;
+			reg = <0xffc08000 0x1000>;
+		};
+
+		timer1: timer1@ffc09000 {
+			compatible = "snps,dw-apb-timer-sp";
+			interrupts = <0 168 4>;
+			reg = <0xffc09000 0x1000>;
+		};
+
+		timer2: timer2@ffd00000 {
+			compatible = "snps,dw-apb-timer-osc";
+			interrupts = <0 169 4>;
+			reg = <0xffd00000 0x1000>;
+		};
+
+		timer3: timer3@ffd01000 {
+			compatible = "snps,dw-apb-timer-osc";
+			interrupts = <0 170 4>;
+			reg = <0xffd01000 0x1000>;
+		};
+/*
+		usb0: usb@ffb00000 {
+				compatible = "snps,dwc-otg";
+				reg = <0xffb00000 0xffff>;
+				interrupts = <0 125 4>;
+				dma-mask = <0xffffffff>;
+				ulpi-ddr = <0>;
+				host-rx-fifo-size = <512>;
+				dev-rx-fifo-size = <512>;
+				dev-nperio-tx-fifo-size = <4096>;
+				dev-perio-tx-fifo-size = <512 512 512 512 512 512
+					512 512 512 512 512 512 512 512 512>;
+				dev-tx-fifo-size = <512 512 512 512 512 512
+					512 512 512 512 512 512 512 512 512>;
+		};
+*/
+		uart0: serial0@ffc02000 {
+			compatible = "snps,dw-apb-uart";
+			reg = <0xffc02000 0x1000>;
+			interrupts = <0 162 4>;
+			reg-shift = <2>;
+			reg-io-width = <4>;
+		};
+
+		uart1: serial1@ffc03000 {
+			compatible = "snps,dw-apb-uart";
+			reg = <0xffc03000 0x1000>;
+			interrupts = <0 163 4>;
+			reg-shift = <2>;
+			reg-io-width = <4>;
+		};
+
+		usb1: usb@ffb40000 {
+				compatible = "snps,dwc-otg";
+				reg = <0xffb40000 0xffff>;
+				interrupts = <0 128 4>;
+				dma-mask = <0xffffffff>;
+				ulpi-ddr = <1>;
+				host-rx-fifo-size = <512>;
+				dev-rx-fifo-size = <512>;
+				dev-nperio-tx-fifo-size = <4096>;
+				dev-perio-tx-fifo-size = <512 512 512 512 512 512
+					512 512 512 512 512 512 512 512 512>;
+				dev-tx-fifo-size = <512 512 512 512 512 512
+					512 512 512 512 512 512 512 512 512>;
+		};
+
+		i2c0: i2c@ffc04000 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			compatible = "snps,designware-i2c";
+			reg = <0xffc04000 0x1000>;
+			interrupts = <0 158 4>;
+			emptyfifo_hold_master = <1>;
+		};
+
+		i2c1: i2c@ffc05000 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			compatible = "snps,designware-i2c";
+			reg = <0xffc05000 0x1000>;
+			interrupts = <0 159 4>;
+			emptyfifo_hold_master = <1>;
+		};
+	};
+};

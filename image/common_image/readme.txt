@@ -1,0 +1,1 @@
+These images are the same for qspi and sd.

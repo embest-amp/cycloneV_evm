@@ -29,6 +29,12 @@
 
 DECLARE_GLOBAL_DATA_PTR;
 
+#ifdef CONFIG_SPL_BUILD
+extern u32 get_core_id(void);
+extern void load_cpu0_global_data_to_cpu1_r8(void);
+extern void restore_cpu1_r8(void);
+#endif
+
 #ifdef CONFIG_SYS_CONSOLE_IS_IN_ENV
 /*
  * if overwrite_console returns 1, the stdin, stderr and stdout
@@ -388,21 +394,43 @@ void putc(const char c)
 
 void puts(const char *s)
 {
+	u32 id;
+	
+#ifdef CONFIG_SPL_BUILD
+	id = get_core_id();
+	if(id == 1)
+	{
+		load_cpu0_global_data_to_cpu1_r8();
+	}
+#endif
+
 #ifdef CONFIG_SILENT_CONSOLE
 	if (gd->flags & GD_FLG_SILENT)
+	{
+		goto restore;
 		return;
+	}
 #endif
 
 #ifdef CONFIG_DISABLE_CONSOLE
 	if (gd->flags & GD_FLG_DISABLE_CONSOLE)
+	{
+		goto restore;
 		return;
+	}
 #endif
 
 	if (!gd->have_console)
 #ifdef CONFIG_SPL_SEMIHOSTING_SUPPORT
 		;	/* printf can be done with semihosting */
 #else
+	{
+	#ifdef CONFIG_SPL_BUILD
+		if(id == 1)
+			restore_cpu1_r8();
+	#endif
 		return pre_console_puts(s);
+	}
 #endif
 
 	if (gd->flags & GD_FLG_DEVINIT) {
@@ -419,7 +447,14 @@ void puts(const char *s)
 #ifdef CONFIG_SPL_SEMIHOSTING_SUPPORT
 		semihosting_write(s);
 #endif
+
 	}
+restore:
+#ifdef CONFIG_SPL_BUILD
+		if(id == 1)
+			restore_cpu1_r8();
+#endif
+	return;
 }
 
 extern u32 get_core_id(void);

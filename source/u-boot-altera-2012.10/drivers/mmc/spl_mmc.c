@@ -35,7 +35,7 @@
 
 DECLARE_GLOBAL_DATA_PTR;
 
-static struct mmc *dw_mmc;
+static struct mmc *dw_mmc = 0;
 static u32 offset = -1;
 
 static void mmc_load_image_raw(struct mmc *mmc)
@@ -190,12 +190,12 @@ void spl_mmc_load_bm_image_mbr(void)
  */
 void spl_mmc_save_func(void)
 {
-	writel(spl_mmc_probe, &(asp->sd_bi.preloader_sd_probe_fn));
-	writel(spl_mmc_get_preloader_offset_in_mbr, &(asp->sd_bi.preloader_sd_get_offset_fn));
+	writel((u32)dw_mmc, &(asp->sd_bi.preloader_sd_saved_mmc));
+	writel((u32)offset, &(asp->sd_bi.preloader_sd_saved_offset));
 	
 	if(dw_mmc)
 	{
-		writel(dw_mmc->block_dev.block_read, &(asp->sd_bi.preloader_sd_read_fn));
+		writel((u32)(dw_mmc->block_dev.block_read), &(asp->sd_bi.preloader_sd_read_fn));
 		asp->sd_bi.sd_read_bl_len = dw_mmc->read_bl_len;
 	}
 }

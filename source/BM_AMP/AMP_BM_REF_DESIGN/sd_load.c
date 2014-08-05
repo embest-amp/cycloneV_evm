@@ -27,13 +27,8 @@
 
 struct mmc;
 
-typedef struct mmc * (*preloader_mmc_probe)(void);
-typedef u32 (*preloader_get_offset_in_mbr)(struct mmc *mmc);
 typedef u32	(*preloader_block_read)(s32 dev, u32 start, u32 blkcnt, void *buffer);
 
-
-preloader_mmc_probe bm_sd_probe;
-preloader_get_offset_in_mbr bm_sd_get_offset;
 preloader_block_read bm_sd_block_read;
 
 extern struct amp_share_param *asp;
@@ -45,18 +40,16 @@ s32 bm_sd_load_rbf(void)
 	u32 image_size_sectors;
 	u32 offset;
 	
-	bm_sd_probe = (preloader_mmc_probe)readl(&(asp->sd_bi.preloader_sd_probe_fn));
-	bm_sd_get_offset = (preloader_get_offset_in_mbr)readl(&(asp->sd_bi.preloader_sd_get_offset_fn));
 	bm_sd_block_read = (preloader_block_read)readl(&(asp->sd_bi.preloader_sd_read_fn));
 
-	mmc = bm_sd_probe();
+	mmc = readl(&(asp->sd_bi.preloader_sd_saved_mmc));
 	if(!mmc)
 	{
 		uartprintf("BM probe sd card failed!\n");
 		return -1;
 	}
 
-	offset = bm_sd_get_offset(mmc);
+	offset = readl(&(asp->sd_bi.preloader_sd_saved_offset));
 
 	/* convert size to sectors - round up */
 	image_size_sectors = (CONFIG_PRELOADER_SDMMC_RBF_IMAGE_SIZE + 

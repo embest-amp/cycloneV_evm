@@ -144,15 +144,12 @@ void gic_Int_cfg_target(u32 irq)
 {
 	u32     reg, temp,shift;
 
-	reg = ((u32)&GIC_INT_REG_ICDIPTR) + irq;
+	reg = ((u32)&GIC_INT_REG_ICDIPTR) + (irq/4)*4;
 	temp = *(u32 *)reg;
 	shift = (irq & 0x3) << 3;
 	temp &= ~(BIT0 << shift);
 	temp |= BIT1 << shift;
-/*
-	temp &=~ BIT0;
-	temp |= BIT1;
-	*/
+
 	(*(u32 *)reg) = temp;
 }
 
@@ -168,7 +165,7 @@ void gic_Int_cfg_target_ex(u32 irq)
 	u32 	reg, temp,shift;
 
 	_raw_spinlock(asp->gic_dist_lock);
-	reg = ((u32)&GIC_INT_REG_ICDIPTR) + irq;
+	reg = ((u32)&GIC_INT_REG_ICDIPTR) + (irq/4)*4;
 	temp = *(u32 *)reg;
 	shift = (irq & 0x3) << 3;
 	temp &= ~(BIT0 << shift);

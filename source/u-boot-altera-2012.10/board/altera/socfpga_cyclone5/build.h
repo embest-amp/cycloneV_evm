@@ -6,8 +6,8 @@
  * Boot option. 1 mean that particular boot mode is selected.
  * Only 1 boot option to be enabled at any time
  */
-#define CONFIG_PRELOADER_BOOT_FROM_QSPI		(1)
-#define CONFIG_PRELOADER_BOOT_FROM_SDMMC	(0)
+#define CONFIG_PRELOADER_BOOT_FROM_QSPI		(0)
+#define CONFIG_PRELOADER_BOOT_FROM_SDMMC	(1)
 /*#define CONFIG_PRELOADER_BOOT_FROM_NAND	(0)*/
 #define CONFIG_PRELOADER_BOOT_FROM_RAM		(0)
 

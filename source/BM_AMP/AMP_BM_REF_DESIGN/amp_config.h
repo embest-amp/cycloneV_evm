@@ -124,8 +124,8 @@ struct amp_share_qspi_boot{
 
 struct amp_share_sd_boot{
 	u32 sd_read_bl_len;	/* normally it is 512 */
-	u32 preloader_sd_probe_fn;
-	u32 preloader_sd_get_offset_fn;
+	u32 preloader_sd_saved_mmc;/*new fixed*/
+	u32 preloader_sd_saved_offset;/*new fixed*/
 	u32 preloader_sd_read_fn;
 };
 
